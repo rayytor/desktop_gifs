@@ -109,11 +109,20 @@
         async get(key) { return key === 'favorites' ? { favorites } : { [key]: window.storedItems[key] }; },
         async set(items) {
           const { favorites: _, ...rest } = items;
-          Object.assign(window.storedItems, rest);
+          for (const [key, newValue] of Object.entries(rest)) {
+            const oldValue = window.storedItems[key];
+            window.storedItems[key] = newValue;
+            for (const listener of storageListeners) listener({ [key]: { oldValue, newValue } }, 'local');
+          }
           if (!('favorites' in items)) return;
           const oldValue = favorites;
           favorites = items.favorites;
           for (const listener of storageListeners) listener({ favorites: { oldValue, newValue: favorites } }, 'local');
+        },
+        async remove(key) {
+          const oldValue = window.storedItems[key];
+          delete window.storedItems[key];
+          for (const listener of storageListeners) listener({ [key]: { oldValue } }, 'local');
         },
       },
       onChanged: { addListener(listener) { storageListeners.push(listener); } },
@@ -122,7 +131,9 @@
   window.addEventListener('message', (event) => {
     if (event.source !== window || event.data?.gcfy !== 'to-main' || event.data.type !== 'arm') return;
     stats.arms.push(event.data);
-    window.postMessage({ gcfy: 'to-content', type: 'armed', nonce: event.data.nonce }, location.origin);
+    const finish = () => window.postMessage({ gcfy: 'to-content', type: 'armed', nonce: event.data.nonce }, location.origin);
+    if (window.delayArm) window.finishArm = finish;
+    else finish();
   });
   for (const box of document.querySelectorAll('ytd-commentbox')) {
     // Native YouTube enables a valid nonempty draft after input, then disables
@@ -137,7 +148,9 @@
       if (nonce) {
         box.querySelector('#submit-button button').disabled = true;
         window.postMessage({ gcfy: 'to-content', type: 'seen', nonce }, location.origin);
-        const finish = () => window.postMessage({ gcfy: 'to-content', type: 'result', nonce, ok: !window.postFailure, error: window.postFailure }, location.origin);
+        // window.postKind: the verdict main.js would report ('blocked' for an
+        // HTTP 400 INVALID_ARGUMENT refusal); window.postFailure: its message.
+        const finish = () => window.postMessage({ gcfy: 'to-content', type: 'result', nonce, ok: !window.postFailure, kind: window.postKind, error: window.postFailure }, location.origin);
         if (window.delayPost) window.finishPost = finish;
         else finish();
       }

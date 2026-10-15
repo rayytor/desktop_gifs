@@ -214,7 +214,7 @@ class PickerTests(unittest.TestCase):
         self.assertTrue(posts[0]['text'].startswith('[[gif:13723327785995541767:'))
         self.assert_picker_events_contained()
 
-    def test_rated_gif_skips_the_check_and_is_armed_for_retries(self):
+    def test_rated_gif_skips_the_check_and_is_verified_g(self):
         self.open_picker()
         self.page.locator('.tile').first.click()
         self.page.locator('#modal-box #submit-button button').click()
@@ -222,7 +222,7 @@ class PickerTests(unittest.TestCase):
         self.assertFalse(any(r['type'] == 'check' for r in self.page.evaluate('stats.requests')))
         self.assertEqual([a['ratedG'] for a in self.page.evaluate('stats.arms')], [True])
 
-    def test_unrated_gif_rated_g_by_the_check_is_armed_for_retries(self):
+    def test_unrated_gif_rated_g_by_the_check_is_verified_g(self):
         self.page.evaluate('window.unrated = true')
         self.open_picker()
         self.page.locator('.tile').first.click()
@@ -297,6 +297,163 @@ class PickerTests(unittest.TestCase):
         self.page.evaluate('() => new Promise(requestAnimationFrame)')
         self.assertFalse(submit.is_enabled())
         self.assertEqual(self.page.evaluate('stats.posts'), [])
+
+    def test_blocked_gif_is_remembered_and_the_picker_says_so_until_one_goes_through(self):
+        notice = self.page.locator('.blocked')
+        submit = self.page.locator('#modal-box #submit-button button')
+        self.open_picker()
+        self.assertFalse(notice.is_visible())
+        self.page.locator('.tile').first.click()
+        self.page.evaluate("window.postKind = 'blocked'; window.postFailure = 'YouTube rejected this GIF comment (HTTP 400, INVALID_ARGUMENT).'")
+        submit.click()
+        self.page.wait_for_function("document.querySelector('.gcfy-attachment-status').textContent.includes('HTTP 400')")
+        blocked_at = self.page.evaluate('storedItems.gifBlockedAt')
+        self.assertIsInstance(blocked_at, int)
+
+        self.open_picker()
+        notice.wait_for(state='visible')
+        self.assertEqual(notice.get_by_role('link', name='#93').get_attribute('href'), 'https://github.com/rayytor/desktop_gifs/issues/93')
+        notice.get_by_role('button', name='Hide this notice').click()
+        self.assertFalse(notice.is_visible())
+        self.assertEqual(self.page.evaluate('storedItems.dismissedGifBlockedAt'), blocked_at)
+        self.page.keyboard.press('Escape')
+
+        # A GIF that goes through clears the remembered refusal everywhere.
+        self.page.evaluate('window.postKind = undefined; window.postFailure = undefined')
+        submit.click()
+        self.page.locator('#modal-box .gcfy-attachment').wait_for(state='detached')
+        self.assertIsNone(self.page.evaluate('storedItems.gifBlockedAt ?? null'))
+
+        self.open_picker()
+        self.assertFalse(notice.is_visible())
+        self.assert_modal_open()
+
+    def test_a_remembered_block_is_shown_for_a_day_and_stale_stamps_are_dropped(self):
+        notice = self.page.locator('.blocked')
+        self.page.evaluate('window.storedItems.gifBlockedAt = Date.now()')
+        self.inject_newer_copy()
+        self.open_picker()
+        notice.wait_for(state='visible')
+        self.page.keyboard.press('Escape')
+
+        self.page.evaluate('window.storedItems.gifBlockedAt = Date.now() - 25 * 60 * 60 * 1000')
+        self.inject_newer_copy()
+        self.open_picker()
+        self.assertFalse(notice.is_visible())
+        self.assert_modal_open()
+
+    def test_a_block_of_an_unrated_gif_is_not_kept_as_the_server_refusal(self):
+        self.page.evaluate("window.unrated = true; window.checkFailure = 'Tenor returned HTTP 503.'")
+        self.open_picker()
+        self.page.locator('.tile').first.click()
+        self.page.evaluate("window.postKind = 'blocked'; window.postFailure = 'YouTube rejected this GIF comment (HTTP 400, INVALID_ARGUMENT).'")
+        self.page.locator('#modal-box #submit-button button').click()
+        self.page.wait_for_function("document.querySelector('.gcfy-attachment-status').textContent.includes('HTTP 400')")
+        self.assertEqual([a['ratedG'] for a in self.page.evaluate('stats.arms')], [False])
+        self.assertIsNone(self.page.evaluate('storedItems.gifBlockedAt ?? null'))
+
+    def test_cancel_during_rating_check_prevents_submission(self):
+        self.page.evaluate('window.unrated = true; window.delayCheck = true')
+        editor = self.page.locator('#modal-box #contenteditable-root')
+        editor.fill('Keep this draft')
+        self.open_picker()
+        self.page.locator('.tile').first.click()
+        self.page.locator('#modal-box #submit-button button').click()
+        self.page.wait_for_function("typeof window.finishCheck === 'function'")
+        self.page.locator('#modal-box #cancel-button button').click()
+        self.page.evaluate('window.finishCheck()')
+        self.page.wait_for_function("!document.querySelector('.gcfy-attachment')?.hasAttribute('data-busy')")
+        self.assertEqual(self.page.evaluate('stats.arms'), [])
+        self.assertEqual(self.page.evaluate('stats.posts'), [])
+        self.assertEqual(editor.inner_text(), 'Keep this draft')
+
+    def test_cancel_while_waiting_for_hook_prevents_submission(self):
+        self.page.evaluate('window.delayArm = true')
+        self.open_picker()
+        self.page.locator('.tile').first.click()
+        self.page.locator('#modal-box #submit-button button').click()
+        self.page.wait_for_function("typeof window.finishArm === 'function'")
+        self.page.locator('#modal-box #cancel-button button').click()
+        self.page.evaluate('window.finishArm()')
+        self.page.wait_for_function("!document.querySelector('.gcfy-attachment')?.hasAttribute('data-busy')")
+        self.assertEqual(self.page.evaluate('stats.posts'), [])
+        self.assertNotIn('[[gif:', self.page.locator('#modal-box #contenteditable-root').inner_text())
+
+    def test_newer_copy_during_rating_check_prevents_old_submission(self):
+        self.page.evaluate('window.unrated = true; window.delayCheck = true')
+        self.open_picker()
+        self.page.locator('.tile').first.click()
+        self.page.locator('#modal-box #submit-button button').click()
+        self.page.wait_for_function("typeof window.finishCheck === 'function'")
+        self.inject_newer_copy()
+        self.page.evaluate('window.finishCheck()')
+        self.page.wait_for_function("document.querySelectorAll('.gcfy-attachment:not([data-busy])').length === 1")
+        self.assertEqual(self.page.evaluate('stats.arms'), [])
+        self.assertEqual(self.page.evaluate('stats.posts'), [])
+
+    def test_newer_copy_while_waiting_for_hook_prevents_old_submission(self):
+        self.page.evaluate('window.delayArm = true')
+        self.open_picker()
+        self.page.locator('.tile').first.click()
+        self.page.locator('#modal-box #submit-button button').click()
+        self.page.wait_for_function("typeof window.finishArm === 'function'")
+        self.inject_newer_copy()
+        self.page.evaluate('window.finishArm()')
+        self.page.wait_for_function("document.querySelectorAll('.gcfy-attachment:not([data-busy])').length === 1")
+        self.assertEqual(self.page.evaluate('stats.posts'), [])
+        self.assertNotIn('[[gif:', self.page.locator('#modal-box #contenteditable-root').inner_text())
+
+    def test_newer_copy_during_sent_request_does_not_duplicate_submission(self):
+        self.page.evaluate('window.delayPost = true')
+        self.open_picker()
+        self.page.locator('.tile').first.click()
+        self.page.locator('#modal-box #submit-button button').click()
+        self.page.wait_for_function("typeof window.finishPost === 'function'")
+        self.inject_newer_copy()
+        self.page.locator('#modal-box #contenteditable-root').press('Control+Enter')
+        self.page.evaluate('window.finishPost()')
+        self.page.locator('#modal-box .gcfy-attachment').wait_for(state='detached')
+        self.assertEqual(len(self.page.evaluate('stats.posts')), 1)
+        self.assertEqual(len(self.page.evaluate('stats.arms')), 1)
+
+    def test_seen_request_timeout_reports_uncertainty_and_removes_marker(self):
+        # Only the fixture clock budget changes; the source behavior stays intact.
+        source = self.source.read_text(encoding='utf-8')
+        source = source.replace('const SUBMIT_GRACE_MS = 4000;', 'const SUBMIT_GRACE_MS = 20;')
+        source = source.replace('const RESULT_TIMEOUT_MS = 60000;', 'const RESULT_TIMEOUT_MS = 20;')
+        self.page.add_script_tag(content=source)
+        self.page.evaluate("window.delayPost = true; window.postFailure = 'Pending fixture request'")
+        editor = self.page.locator('#modal-box #contenteditable-root')
+        editor.fill('Keep this draft')
+        self.open_picker()
+        self.page.locator('.tile').first.click()
+        self.page.locator('#modal-box #submit-button button').click()
+        self.page.wait_for_function("document.querySelector('.gcfy-attachment-status').dataset.kind === 'error'")
+        status = self.page.locator('.gcfy-attachment-status').inner_text()
+        self.assertNotIn('Nothing was posted', status)
+        self.assertTrue(any(word in status.lower() for word in ('unknown', 'confirm', 'check')), status)
+        self.assertEqual(editor.inner_text(), 'Keep this draft')
+        self.assertEqual(len(self.page.evaluate('stats.posts')), 1)
+
+    def test_invalid_stored_favorite_ids_are_filtered_and_valid_favorite_survives(self):
+        self.page.evaluate("""async () => {
+            const gif = { title: 'Stored favorite', preview: 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', width: 120, height: 80 };
+            await chrome.storage.local.set({ favorites: [
+                { ...gif, id: '13723327785995541767' },
+                { ...gif, id: 'not-a-tenor-id' },
+                { ...gif, id: '123456789012345678901' },
+                { ...gif, id: '' },
+                { ...gif, id: 123 },
+            ] });
+        }""")
+        self.open_picker()
+        self.page.get_by_role('button', name='Favorites', exact=True).click()
+        self.assertEqual(self.page.locator('.tile').count(), 1)
+        self.page.locator('.tile').first.click()
+        self.page.locator('#modal-box #submit-button button').click()
+        self.page.locator('#modal-box .gcfy-attachment').wait_for(state='detached')
+        self.assertEqual(len(self.page.evaluate('stats.posts')), 1)
+        self.assertTrue(self.page.evaluate('stats.posts')[0]['text'].startswith('[[gif:13723327785995541767:'))
 
 
 def main():

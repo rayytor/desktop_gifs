@@ -30,9 +30,9 @@
 </p>
 
 > [!WARNING]
-> **Posting GIFs is broken right now.** Since 14 October 2026 YouTube refuses GIF comments sent from desktop. For most people every try fails, whether it has text or not, and whether it is a comment or a reply. The cause is on YouTube's side. Reinstalling, updating or picking another GIF will not fix it. Searching and the picker still work.
+> **Desktop GIF posting has no verified fix.** On 14 October 2026 the maintainer and users reported rejection of desktop GIF comments, including replies and drafts with or without text. The exact server restriction is unconfirmed. This branch does not establish restored acceptance. Searching and the picker still work.
 >
-> I have not found a way around it yet. **If you find one, open a pull request and I will review and merge it.** What is known so far, and where to report, is in [#93](https://github.com/rayytor/desktop_gifs/issues/93). Please add to that issue instead of opening a new one.
+> This branch adds submission safeguards; see [the investigation](docs/issue93-investigation.md). What is known so far, and where to report, is in [#93](https://github.com/rayytor/desktop_gifs/issues/93). Please add to that issue instead of opening a new one.
 
 YouTube's mobile app can attach a GIF to a comment; the desktop site has no button for it. Desktop GIFs adds one, next to the emoji button:
 
@@ -120,11 +120,9 @@ To keep a GIF, point at it and click the star in its corner. The **★** button 
 | No **GIF** button in the comment box | Refresh the YouTube tab. |
 | "Not ready in this tab yet" | The tab was open before the install and the extension is still checking that it can post from it. Try again in a few seconds, or refresh the tab. |
 | "The page hook is not running" or "The extension was reloaded" | Refresh the YouTube tab. |
-| "The GIF was not sent" | YouTube did not send the comment. Press its Comment button again. |
-| The post fails | Nothing is published, and your text and the GIF stay in the box. Try again. |
-| "YouTube is refusing GIF comments sent from desktop" | Since 14 October 2026 YouTube turns down GIF comments sent from desktop. At first it refused some at random; now, for many people, it refuses every one, GIF only or with text, comment or reply. People report that it depends on where they connect from. The extension already tried up to twelve times. The GIF is not the cause, so picking another one will not help. Your text and the GIF stay in the box. The YouTube phone app may still post GIFs from the same account. |
-| "YouTube turned it down. Trying again…" | YouTube blocked the comment and the extension is retrying on its own. Wait for it to finish; there is no need to click again. |
-| "Either Tenor does not rate the GIF G, or YouTube is refusing GIF comments" | Tenor could not be asked for the GIF's rating, so the extension does not know which one it is. Try a GIF from the picker's search results: those are rated G. |
+| "The GIF submission was not confirmed" | Check whether the comment exists before submitting again. A missing acknowledgement does not prove it was not published. |
+| The post fails | Read the result before submitting again. For a network failure or missing confirmation, check whether the comment exists first. |
+| "YouTube rejected this GIF comment" | See [#93](https://github.com/rayytor/desktop_gifs/issues/93). This build sends the request once, including for a G-rated GIF, and does not restore server acceptance. A 400 refusal of a G-rated GIF is remembered for a day, or until a GIF goes through, and the picker links to that issue while it is. Your text and GIF stay available after a rejection. |
 | "YouTube does not accept this GIF" | YouTube looked the GIF up and will not take it. Pick a different GIF. |
 | "YouTube only takes GIFs that Tenor rates G" | The GIF has another rating on Tenor. The extension checks a pasted link when you pick it, and a favorite or a GIF without a rating just before posting. Pick a different GIF. |
 | "Checking the GIF…" | The GIF was picked without a rating, so the extension asks Tenor for it before posting. This takes at most five seconds; if Tenor does not answer, the comment is posted anyway. |
@@ -137,13 +135,13 @@ To keep a GIF, point at it and click the star in its corner. The **★** button 
 | Chrome, Edge or Brave lists the error `'background.scripts' requires manifest version of 2 or lower` | The extension is installed and works. The message appears when the `extension` folder is loaded from the source; that key is there for Firefox. `desktop-gifs-chromium.zip` does not have it. |
 | Clicking **GIF** does nothing in Firefox | Update to 0.1.1 or newer. |
 
-If posting keeps failing, open the browser's developer tools and look for **Desktop GIFs: comment not confirmed** in the YouTube tab's Console; Chromium also lists it among the extension's errors. It gives the endpoint, the Tenor ID, whether the GIF was rated G, whether there was text, how YouTube answered (`kind`), how many tries were made, the HTTP and API status and YouTube's own message. It holds no comment text, headers, cookies or response body, so it can be pasted into a bug report as it is.
+If posting keeps failing, look for **Desktop GIFs: comment not confirmed** in the YouTube tab Console. Diagnostics contain the endpoint, Tenor ID, rating flag, text-presence flag, result kind, number of sends, HTTP status and recognized API/action status codes. They exclude server message text, arbitrary status strings, comment text, headers, cookies, attestation and response bodies. YouTube error explanations may still appear locally on the attached GIF.
 
 ## Limits
 
 - **Unofficial.** This project is not affiliated with YouTube, Google or Tenor. It sends a field that YouTube's desktop site does not use itself, so it can stop working whenever YouTube changes something, and using it is at your own risk under YouTube's Terms of Service.
 - **Tenor only.** YouTube's GIF comments take Tenor GIFs, so a GIF file from your computer cannot be posted.
-- **YouTube is blocking GIF comments from desktop.** Since 14 October 2026 YouTube refuses GIF comments sent from desktop. At first it refused some at random and a second try often went through; now, for most people, it refuses every one. See [#93](https://github.com/rayytor/desktop_gifs/issues/93). When it blocks a G-rated GIF, the extension tries up to twelve times in about half a minute, then stops, so posting can take a while. A blocked try posts nothing, so a retry never posts twice. Some people also report GIF comments posted from desktop being removed a few seconds later.
+- **Desktop GIF posting remains unverified.** On 14 October 2026 users and the maintainer reported HTTP 400 INVALID_ARGUMENT for desktop GIF comments and replies; see [#93](https://github.com/rayytor/desktop_gifs/issues/93). This build removes automatic repeat submissions and remembers a 400 refusal of a G-rated GIF for a day, or until one goes through, linking the picker to that issue. It does not change the attachment protocol or prove YouTube accepts GIFs. A success acknowledgement alone does not prove persistence or visibility to other visitors.
 - **G-rated GIFs only.** YouTube turns down every GIF that Tenor does not rate G, so the picker shows only those, and a pasted link to any other GIF is not offered.
 - **Search depends on Tenor's website.** Tenor closed its public API in June 2026. Search and ratings come from the API that tenor.com itself uses, with the key its pages carry, and fall back to the results in Tenor's web pages, which have no ratings. Either can break when Tenor changes its site.
 - **GIFs only.** Stickers and still images are left out of the results.
@@ -161,13 +159,13 @@ When you pick a GIF, the content script attaches it to the comment box. When you
 
 There is no build step and there are no dependencies: the `extension` folder is the extension. `python3 tools/package.py` writes the two release ZIPs, which are that folder with the other browser's background key taken out of the manifest.
 
-`node --test tests/main.test.cjs tests/sw.test.cjs` (Node.js 22 or newer) checks how comment requests are rewritten, how YouTube's answers are read and retried, and the Tenor rating check, against simulated responses. `python3 tests/picker.browser.py` drives the real content script in Chromium and Firefox on a local page that imitates YouTube's comment boxes and a notification reply dialog; it needs Python's `playwright` package and its browsers (`python3 -m playwright install chromium firefox`). Neither posts anything to YouTube.
+`node --test tests/main.test.cjs tests/sw.test.cjs` (Node.js 22 or newer) checks how comment requests are rewritten, how YouTube's answers are read without automatic resubmission, and the Tenor rating check, against simulated responses. `python3 tests/picker.browser.py` drives the real content script in Chromium and Firefox on a local page that imitates YouTube's comment boxes and a notification reply dialog; it needs Python's `playwright` package and its browsers (`python3 -m playwright install chromium firefox`). Neither posts anything to YouTube.
 
 ## Privacy
 
 - **YouTube, Tenor and GitHub, nothing else:** `youtube.com`, where it adds the button; for search `tenor.com` and Tenor's API at `tenor.googleapis.com`; and, at most once a day when the picker opens, this repository's latest release at `api.github.com`, to say when a new version is out.
 - **Nothing collected.** No analytics, no account.
-- **Favorites stay in your browser.** They are kept in the extension's own local storage and are not sent anywhere. So are the key Tenor's pages give out for its API, and the last release version seen.
+- **Favorites stay in your browser.** They are kept in the extension's own local storage and are not sent anywhere. So are the key Tenor's pages give out for its API, the last release version seen, and when a G-rated GIF comment was last refused by the server.
 - **Search goes to Tenor without your cookies**, and GIF previews load from Tenor's media servers. The release check goes to GitHub without cookies too.
 - **Your YouTube credentials are never read.** YouTube's own page sends the comment.
 

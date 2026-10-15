@@ -25,11 +25,16 @@
   const SEARCH_DEBOUNCE_MS = 350;
   const ARM_TIMEOUT_MS = 1500;
   const SUBMIT_GRACE_MS = 4000;
-  // Long enough for main.js to try a blocked GIF comment again.
+  // Wait for the page's single request; a timeout does not prove rejection.
   const RESULT_TIMEOUT_MS = 60000;
   // How long a post waits for Tenor to rate a GIF picked without a rating.
   const CHECK_TIMEOUT_MS = 5000;
   const NO_FAVORITES = 'No favorites yet. Point at a GIF and click its star.';
+  // How long a server refusal (HTTP 400) of a verified G-rated GIF is
+  // remembered, or until a GIF goes through, so the picker can point at the
+  // issue tracking it instead of leaving the next attempt to fail quietly.
+  const BLOCKED_MEMORY_MS = 24 * 60 * 60 * 1000;
+  const BLOCKED_ISSUE = 'https://github.com/rayytor/desktop_gifs/issues/93';
 
   const PICKER_CSS = `
     :host { all: initial; position: fixed; z-index: 2147483647; }
@@ -74,6 +79,20 @@
     }
     .update button:hover { background: var(--field); }
     .update a:focus-visible, .update button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+    .blocked {
+      flex: none; display: flex; align-items: center; gap: 8px; padding: 6px 8px 6px 12px;
+      border-bottom: 1px solid var(--line); color: var(--err);
+    }
+    .blocked[hidden] { display: none; }
+    .blocked span { flex: 1; min-width: 0; }
+    .blocked a { color: var(--accent); font-weight: 500; text-decoration: none; }
+    .blocked a:hover { text-decoration: underline; }
+    .blocked button {
+      flex: none; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 50%;
+      background: transparent; color: var(--muted); font: 16px/1 Arial, sans-serif; cursor: pointer;
+    }
+    .blocked button:hover { background: var(--field); }
+    .blocked a:focus-visible, .blocked button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
     .status { flex: none; padding: 6px 12px 0; color: var(--muted); }
     .status:empty { display: none; }
     .status[data-kind="error"] { color: var(--err); }
@@ -176,7 +195,7 @@
 
   // ------------------------------------------------------------------ picker
 
-  const picker = { open: false, host: null, anchor: null, box: null, els: null, seq: 0, timer: 0, gifs: [], nonce: null, favorites: [], showingFavorites: false, updateAsked: false };
+  const picker = { open: false, host: null, anchor: null, box: null, els: null, seq: 0, timer: 0, gifs: [], nonce: null, favorites: [], showingFavorites: false, updateAsked: false, blockedAt: 0, dismissedBlockedAt: 0 };
 
   function buildPicker() {
     const host = document.createElement('div');
@@ -234,6 +253,24 @@
     updateClose.setAttribute('aria-label', 'Hide until the next version');
     update.append(updateText, updateLink, updateClose);
 
+    // Shown while a recent server refusal is remembered; see showBlocked.
+    const blocked = document.createElement('div');
+    blocked.className = 'blocked';
+    blocked.hidden = true;
+    const blockedText = document.createElement('span');
+    const blockedLink = document.createElement('a');
+    blockedLink.href = BLOCKED_ISSUE;
+    blockedLink.target = '_blank';
+    blockedLink.rel = 'noopener noreferrer';
+    blockedLink.textContent = '#93';
+    blockedText.append('YouTube rejected your last GIF comment (HTTP 400). See ', blockedLink, ' for what is known so far. Nothing was posted.');
+    const blockedClose = document.createElement('button');
+    blockedClose.type = 'button';
+    blockedClose.textContent = '×';
+    blockedClose.title = 'Hide this notice';
+    blockedClose.setAttribute('aria-label', 'Hide this notice');
+    blocked.append(blockedText, blockedClose);
+
     const status = document.createElement('div');
     status.className = 'status';
     status.setAttribute('role', 'status');
@@ -241,7 +278,7 @@
     const grid = document.createElement('div');
     grid.className = 'grid';
 
-    panel.append(search, update, status, grid);
+    panel.append(search, update, blocked, status, grid);
     root.append(style, panel);
 
     input.addEventListener('input', () => {
@@ -269,8 +306,15 @@
       input.focus();
     });
 
+    blockedClose.addEventListener('click', () => {
+      blocked.hidden = true;
+      picker.dismissedBlockedAt = picker.blockedAt;
+      chrome.storage.local.set({ dismissedGifBlockedAt: picker.blockedAt }).catch(() => {});
+      input.focus();
+    });
+
     picker.host = host;
-    picker.els = { panel, input, status, grid, favTab, update, updateText, updateLink };
+    picker.els = { panel, input, status, grid, favTab, update, updateText, updateLink, blocked };
   }
 
   // A ZIP-installed extension does not update itself, so the picker says when
@@ -293,6 +337,15 @@
     updateText.textContent = `Desktop GIFs ${release.version} is out.`;
     updateLink.href = release.url;
     update.hidden = false;
+  }
+
+  // The remembered refusal is shown while it is recent and has not been
+  // dismissed; a newer refusal brings the notice back.
+  const recentlyBlocked = () => picker.blockedAt > 0 && Date.now() - picker.blockedAt < BLOCKED_MEMORY_MS;
+
+  function showBlocked() {
+    if (!picker.els) return;
+    picker.els.blocked.hidden = !recentlyBlocked() || picker.blockedAt === picker.dismissedBlockedAt;
   }
 
   function setStatus(text, kind) {
@@ -325,6 +378,7 @@
     box.append(picker.host);
     picker.host.showPopover();
     place();
+    showBlocked();
     picker.els.input.focus();
     load(picker.els.input.value);
     showUpdate();
@@ -430,16 +484,33 @@
   // tab works on the same list and none writes back an old copy.
   function useFavorites(stored) {
     picker.favorites = (Array.isArray(stored) ? stored : []).filter((g) => g
-      && typeof g.id === 'string' && typeof g.title === 'string' && typeof g.preview === 'string'
+      && typeof g.id === 'string' && /^\d{1,20}$/.test(g.id) && typeof g.title === 'string' && typeof g.preview === 'string'
       && g.width > 0 && g.height > 0);
     if (!picker.open) return;
     if (picker.showingFavorites) renderFavorites(true);
     else for (const star of picker.els.grid.querySelectorAll('.star')) setStar(star, picker.gifs[Number(star.dataset.index)]);
   }
 
+  // The remembered refusal and the notice's dismissal, read on load and on
+  // every change, so every tab shows the same notice.
+  function useBlocked(stored) {
+    picker.blockedAt = typeof stored === 'number' ? stored : 0;
+    showBlocked();
+  }
+
+  function useDismissedBlocked(stored) {
+    picker.dismissedBlockedAt = typeof stored === 'number' ? stored : 0;
+    showBlocked();
+  }
+
   chrome.storage.local.get('favorites').then((items) => useFavorites(items.favorites));
+  chrome.storage.local.get('gifBlockedAt').then((items) => useBlocked(items.gifBlockedAt)).catch(() => {});
+  chrome.storage.local.get('dismissedGifBlockedAt').then((items) => useDismissedBlocked(items.dismissedGifBlockedAt)).catch(() => {});
   const onStorage = (changes, area) => {
-    if (area === 'local' && changes.favorites) useFavorites(changes.favorites.newValue);
+    if (area !== 'local') return;
+    if (changes.favorites) useFavorites(changes.favorites.newValue);
+    if (changes.gifBlockedAt) useBlocked(changes.gifBlockedAt.newValue);
+    if (changes.dismissedGifBlockedAt) useDismissedBlocked(changes.dismissedGifBlockedAt.newValue);
   };
   chrome.storage.onChanged.addListener(onStorage);
 
@@ -648,7 +719,7 @@
     const att = attachments.get(box);
     const editor = editorOf(box);
     const submit = submitOf(box);
-    if (!att || att.posting || !editor || !submit) return;
+    if (retired || !att || att.posting || !editor || !submit) return;
 
     const nonce = newNonce();
     const marker = `[[gif:${att.gif.id}:${nonce}]]`;
@@ -657,28 +728,42 @@
     let armedAck;
     const armedPromise = new Promise((resolve) => { armedAck = resolve; });
     let seen = false;
+    let cancelled = false;
     fromMain.set(nonce, (msg) => {
       if (msg.type === 'armed') armedAck(true);
       else if (msg.type === 'refused') armedAck('refused');
       else if (msg.type === 'seen') seen = true;
-      else if (msg.type === 'retrying') setChipStatus(att, `YouTube turned it down. Trying again (${msg.attempt} of ${msg.tries})…`);
       else if (msg.type === 'result') settle(msg);
     });
 
     att.posting = true;
+    att.submitted = false;
+    att.cancel = () => {
+      cancelled = true;
+      toMain({ type: 'disarm', nonce });
+      armedAck(false);
+      const error = att.submitted
+        ? 'The comment request may already have been sent. Check the comments before trying again.'
+        : 'The GIF submission was cancelled. Nothing was posted.';
+      setChipStatus(att, error, 'error');
+      settle({ ok: false, error });
+      if (editor.isConnected) removeMarker(editor, marker);
+    };
     att.chip.toggleAttribute('data-busy', true);
     setChipStatus(att, 'Posting…');
     try {
       // A favorite or a result from Tenor's web pages may have no rating yet.
       // A GIF Tenor does not rate G is never sent. One whose rating cannot be
-      // read still is, and YouTube decides; main.js just does not retry it.
+      // read still is, and YouTube decides.
       let rating = att.gif.contentRating;
       if (rating !== 'G') {
         setChipStatus(att, 'Checking the GIF…');
         const checked = await Promise.race([
           chrome.runtime.sendMessage({ type: 'check', id: att.gif.id }).catch(() => null),
           sleep(CHECK_TIMEOUT_MS).then(() => null),
+          settled.then(() => null),
         ]);
+        if (cancelled) return;
         const found = checked && checked.ok && Array.isArray(checked.gifs) && checked.gifs.find((g) => g.id === att.gif.id);
         rating = found ? found.contentRating : null;
         if (rating && rating !== 'G') {
@@ -696,6 +781,7 @@
       // Without the page hook the marker would be posted as plain text, so
       // nothing is typed into the box until the hook has answered.
       const armed = await Promise.race([armedPromise, sleep(ARM_TIMEOUT_MS).then(() => false)]);
+      if (cancelled) return;
       if (armed !== true) {
         setChipStatus(att, armed === 'refused'
           ? 'Not ready in this tab yet. Try again in a few seconds, or refresh this page.'
@@ -709,13 +795,27 @@
       }
 
       appendMarker(editor, marker);
-      for (let i = 0; i < 20 && submit.disabled; i++) await sleep(50);
+      for (let i = 0; i < 20 && submit.disabled && !cancelled; i++) await sleep(50);
+      if (cancelled) return;
+      if (!box.isConnected || !editor.getClientRects().length) { att.cancel(); return; }
+      att.submitted = true;
       passThrough = true;
       try { submit.click(); } finally { passThrough = false; }
 
       let result = await Promise.race([settled, sleep(SUBMIT_GRACE_MS).then(() => null)]);
       if (!result && seen) result = await Promise.race([settled, sleep(RESULT_TIMEOUT_MS).then(() => null)]);
 
+      // Only a verified G-rated GIF turned down by the server counts as the
+      // known desktop failure; an unrated one may have been refused for its
+      // rating. Shared with every tab through storage, and cleared by a GIF
+      // that goes through.
+      if (result && result.kind === 'blocked' && rating === 'G') {
+        picker.blockedAt = Date.now();
+        chrome.storage.local.set({ gifBlockedAt: picker.blockedAt }).catch(() => {});
+      } else if (result && result.ok) {
+        picker.blockedAt = 0;
+        chrome.storage.local.remove('gifBlockedAt').catch(() => {});
+      }
       if (result && result.ok) {
         detach(box, false);
         return;
@@ -723,10 +823,15 @@
       // Failed or never sent: take the marker back out of the box.
       toMain({ type: 'disarm', nonce });
       if (editor.isConnected) removeMarker(editor, marker);
-      setChipStatus(att, (result && result.error) || 'The GIF was not sent. Nothing was posted.', 'error');
+      setChipStatus(att, (result && result.error) || (seen
+        ? 'YouTube did not confirm this GIF comment in time. Check the comments before trying again.'
+        : 'The GIF submission was not confirmed. Check the comments before trying again.'), 'error');
     } finally {
+      toMain({ type: 'disarm', nonce });
+      if (editor.isConnected) removeMarker(editor, marker);
       fromMain.delete(nonce);
       att.posting = false;
+      att.cancel = null;
       att.chip.toggleAttribute('data-busy', false);
       if (retired) {
         release(box);
@@ -752,7 +857,8 @@
       e.preventDefault();
       e.stopImmediatePropagation();
       post(box);
-    } else if (cancel && path.includes(cancel) && !attachments.get(box).posting) {
+    } else if (cancel && path.includes(cancel)) {
+      if (attachments.get(box).posting) attachments.get(box).cancel();
       detach(box, false);
     }
   }, { capture: true, signal });
@@ -808,7 +914,10 @@
   window.addEventListener('resize', queuePlace, { passive: true, signal });
   window.addEventListener('yt-navigate-start', () => {
     closePicker();
-    for (const [box, att] of attachments) if (!att.posting) detach(box, false);
+    for (const [box, att] of attachments) {
+      if (!att.posting) detach(box, false);
+      else if (!att.submitted) att.cancel();
+    }
   }, { signal });
 
   // ---------------------------------------------------------------- handover
@@ -827,7 +936,10 @@
     scanner.disconnect();
     try { chrome.storage.onChanged.removeListener(onStorage); } catch (e) { /* this copy's extension is gone */ }
     closePicker();
-    for (const [box, att] of attachments) if (!att.posting) release(box);
+    for (const [box, att] of attachments) {
+      if (!att.posting) release(box);
+      else if (!att.submitted) att.cancel();
+    }
   }
 
   document.addEventListener(TAKEOVER, retire, { signal });
