@@ -1,0 +1,47 @@
+# I used ChatGPT to make this since iam not good at making GitHub Actions YAML
+name: Package Desktop GIFs
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: "Git tag for this release (e.g. v0.1.5)"
+        required: true
+        type: string
+      release_name:
+        description: "Name displayed on the GitHub Release"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Build release ZIPs
+        run: python tools/package.py
+
+      - name: Upload ZIPs
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-gifs-release-zips
+          path: dist/*.zip
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag_name }}
+          name: ${{ inputs.release_name }}
+          files: dist/*.zip
+          generate_release_notes: true

@@ -2,18 +2,18 @@
   <img src="extension/icons/icon-128.png" width="96" height="96" alt="Desktop GIFs icon">
 </p>
 
-<h1 align="center">Desktop GIFs</h1>
+<h1 align="center">Desktop GIFs (Ren's Fork)</h1>
 
 <p align="center">
   <strong>Post GIFs in YouTube comments and replies from a desktop browser.</strong>
 </p>
 
 <p align="center">
-  <a href="https://github.com/rayytor/desktop_gifs/releases/latest"><img src="https://img.shields.io/github/manifest-json/v/rayytor/desktop_gifs?filename=extension%2Fmanifest.json&label=version&color=ff0033" alt="Version"></a>
+  <a href="https://github.com/RenPT23/desktop_gifs/releases/latest"><img src="https://img.shields.io/github/manifest-json/v/RenPT23/desktop_gifs?filename=extension%2Fmanifest.json&label=version&color=ff0033" alt="Version"></a>
   <img src="https://img.shields.io/badge/Chrome-121%2B-4285F4?logo=googlechrome&logoColor=white" alt="Chrome 121 or newer">
   <img src="https://img.shields.io/badge/Firefox-140%2B-FF7139?logo=firefoxbrowser&logoColor=white" alt="Firefox 140 or newer">
   <img src="https://img.shields.io/badge/Manifest-V3-34A853" alt="Manifest V3">
-  <a href="LICENSE"><img src="https://img.shields.io/github/license/rayytor/desktop_gifs" alt="License: GPL-3.0"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/RenPT23/desktop_gifs" alt="License: GPL-3.0"></a>
 </p>
 
 <p align="center">
@@ -53,13 +53,13 @@ YouTube's mobile app can attach a GIF to a comment; the desktop site has no butt
 Desktop GIFs is not on the Chrome Web Store or addons.mozilla.org yet, so it is loaded from a ZIP. There is one for each browser on the [latest release](https://github.com/rayytor/desktop_gifs/releases/latest).
 
 <p>
-  <a href="https://github.com/rayytor/desktop_gifs/releases/latest/download/desktop-gifs-chromium.zip"><img src="https://img.shields.io/badge/Download-Chrome%20%C2%B7%20Edge%20%C2%B7%20Brave-4285F4?style=for-the-badge&logo=googlechrome&logoColor=white" alt="Download for Chrome, Edge and Brave"></a>
-  <a href="https://github.com/rayytor/desktop_gifs/releases/latest/download/desktop-gifs-firefox.zip"><img src="https://img.shields.io/badge/Download-Firefox-FF7139?style=for-the-badge&logo=firefoxbrowser&logoColor=white" alt="Download for Firefox"></a>
+  <a href="https://github.com/RenPT23/desktop_gifs/releases/latest/download/desktop-gifs-chromium.zip"><img src="https://img.shields.io/badge/Download-Chrome%20%C2%B7%20Edge%20%C2%B7%20Brave-4285F4?style=for-the-badge&logo=googlechrome&logoColor=white" alt="Download for Chrome, Edge and Brave"></a>
+  <a href="https://github.com/RenPT23/desktop_gifs/releases/latest/download/desktop-gifs-firefox.zip"><img src="https://img.shields.io/badge/Download-Firefox-FF7139?style=for-the-badge&logo=firefoxbrowser&logoColor=white" alt="Download for Firefox"></a>
 </p>
 
 ### Chrome, Edge, Brave
 
-1. Download [`desktop-gifs-chromium.zip`](https://github.com/rayytor/desktop_gifs/releases/latest/download/desktop-gifs-chromium.zip) and unzip it.
+1. Download [`desktop-gifs-chromium.zip`](https://github.com/RenPT23/desktop_gifs/releases/latest/download/desktop-gifs-chromium.zip) and unzip it.
 2. Open `chrome://extensions` and turn on **Developer mode**.
 3. Click **Load unpacked** and choose the unzipped folder, the one that has `manifest.json` directly inside it.
 
@@ -69,7 +69,7 @@ Only Chrome is tested. Edge, Brave and other Chromium browsers should work the s
 
 ### Firefox
 
-1. Download [`desktop-gifs-firefox.zip`](https://github.com/rayytor/desktop_gifs/releases/latest/download/desktop-gifs-firefox.zip). There is no need to unzip it.
+1. Download [`desktop-gifs-firefox.zip`](https://github.com/RenPT23/desktop_gifs/releases/latest/download/desktop-gifs-firefox.zip). There is no need to unzip it.
 2. Open `about:debugging#/runtime/this-firefox`.
 3. Click **Load Temporary Add-on…** and choose the ZIP.
 
@@ -173,6 +173,6 @@ There is no build step and there are no dependencies: the `extension` folder is 
 
 ## License
 
-Copyright (C) 2026 rayytor
+Copyright (C) 2026 rayytor, RenPT23
 
 This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, version 3. It is distributed without any warranty. See [LICENSE](LICENSE).

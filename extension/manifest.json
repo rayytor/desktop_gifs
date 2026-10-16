@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Desktop GIFs",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "Post Tenor GIFs in YouTube comments and replies from desktop.",
   "minimum_chrome_version": "121",
   "browser_specific_settings": {
@@ -19,7 +19,7 @@
     "48": "icons/icon-48.png",
     "128": "icons/icon-128.png"
   },
-  "permissions": ["scripting", "storage"],
+  "permissions": ["scripting", "storage", "webRequest", "webRequestBlocking"],
   "host_permissions": ["https://tenor.com/*", "https://www.youtube.com/*"],
   "background": {
     "service_worker": "src/sw.js",

@@ -10,6 +10,8 @@
 // in storage once read, so the API keeps working when tenor.com itself cannot
 // be reached.
 
+const SPOOFED_UA = "Mozilla/5.0 (Linux; Android 15; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36"
+
 const TENOR = 'https://tenor.com';
 const TENOR_API = 'https://tenor.googleapis.com/v2';
 const CACHE_TTL_MS = 10 * 60 * 1000;
@@ -57,6 +59,26 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   );
   return true;
 });
+
+chrome.webRequest.onBeforeSendHeaders.addListener(
+  (details) => {
+    const path = new URL(details.url).pathname
+    if (path === "/youtubei/v1/comment/create_comment" || path === "/youtubei/v1/comment/create_comment_reply") {
+      const headers = details.requestHeaders
+      const ua = headers.find(h => h.name.toLowerCase() === "user-agent")
+      if (ua) {
+        ua.value = SPOOFED_UA
+      } else {
+        console.warn("Desktop GIFs - User Agent couldnt be found to spoof") // hey rayytor, you can replace this warning with whatever sounds best to you
+      }
+      return { requestHeaders: headers }
+    }
+  },
+  {
+    urls: ["https://www.youtube.com/*"]
+  },
+  ["blocking", "requestHeaders"]
+)
 
 async function handle(msg) {
   if (!msg || typeof msg !== 'object') throw new Error('Bad request.');
