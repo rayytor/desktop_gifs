@@ -41,11 +41,12 @@
   // HTTP 400. At first the very same request, sent again, was refused about
   // two times in three. Later that day every request with a tenorId was
   // refused, before YouTube even looked the GIF up: real or made-up ID, with
-  // or without text, comment or reply. Text comments in the same requests
-  // still validated, and no other request field carries a GIF. People report
-  // that it depends on where they connect from, so a blocked one still gets
-  // up to twelve tries in about half a minute. A blocked request posts
-  // nothing, so trying again cannot post twice.
+  // or without text, comment or reply, from every reported country, with and
+  // without a VPN. Text comments in the same requests still validated, and
+  // no other request field carries a GIF. What would satisfy the refusal is
+  // not known (issue #93), so a blocked one still gets up to twelve tries in
+  // about half a minute in case it turns intermittent again. A blocked
+  // request posts nothing, so trying again cannot post twice.
   const RETRY_DELAYS_MS = [1000, 1500, 2000, 2000, 2500, 2500, 3000, 3000, 3000, 3000, 3000];
 
   // nonce -> { id, ratedG, expires }
@@ -226,11 +227,16 @@
   //   gif        HTTP 200 with a showErrorAction where the actionResult would
   //              be: YouTube looked the GIF up and will not take it (unknown
   //              ID, or not rated G)
-  //   blocked    HTTP 400 INVALID_ARGUMENT: YouTube accepted the GIF but
-  //              refuses the comment. The page's own request was valid before
-  //              the GIF was added, so this is about GIF comments.
+  //   blocked    HTTP 400 INVALID_ARGUMENT: the page's own request was valid
+  //              before the GIF was added, so this is about GIF comments.
+  //              Since 14 October 2026 the refusal comes from validation,
+  //              before YouTube looks the GIF up at all (issue #93): it
+  //              fires signed out and for a made-up ID just the same, while
+  //              the same request without the GIF goes on to the sign-in
+  //              check, and no tested change to the request satisfies it
   //   rejected   another refusal; nothing was posted
-  //   uncertain  no readable confirmation either way; the comment may be up
+  //   uncertain  no readable confirmation either way, or answers that
+  //              contradict each other; the comment may be up
   // with YouTube's own explanation, if it gave one.
   async function judge(response) {
     let json = null;
@@ -250,7 +256,12 @@
       actionStatus: action && typeof action.status === 'string' ? action.status : null,
       message,
     };
-    const kind = response.ok && action && action.status === 'STATUS_SUCCEEDED' && !errors.length ? 'posted'
+    // A success beside an error answers both ways at once, so it settles
+    // nothing: the comment may or may not be up, and saying either way could
+    // cost a duplicate or hide a real post.
+    const succeeded = action && action.status === 'STATUS_SUCCEEDED';
+    const kind = response.ok && succeeded && !errors.length && !json.error ? 'posted'
+      : response.ok && succeeded ? 'uncertain'
       : response.status === 400 && apiStatus === 'INVALID_ARGUMENT' ? 'blocked'
       : response.ok && !action && errors.length ? 'gif'
       : (response.status >= 400 && response.status < 500) || errors.length || verdict.actionStatus === 'STATUS_FAILED' ? 'rejected'

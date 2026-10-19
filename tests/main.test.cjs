@@ -155,12 +155,41 @@ for (const [name, reply] of [['HTML', '<html>Service unavailable</html>'], ['emp
   });
 }
 
-test('an error action takes precedence over a success status', async () => {
+test('a success beside an error neither confirms nor denies a post', async () => {
   const h = hook({ actionResult: { status: 'STATUS_SUCCEEDED' }, actions: [{ showErrorAction: { errorMessage: { simpleText: 'Posting was rejected.' } } }] });
-  h.arm();
+  h.arm(true);
   await h.send();
+  // A contradictory answer is not worth another try, and could mean the
+  // comment is up: it must not be called a failure either.
+  assert.equal(h.requests.length, 1);
   assert.equal(h.result().ok, false);
   assert.match(h.result().error, /Posting was rejected/);
+  assert.match(h.result().error, /Check the comments before trying again/);
+  assert.doesNotMatch(h.result().error, /Nothing was posted/);
+  assert.equal(JSON.parse(h.warnings[0][1]).kind, 'uncertain');
+});
+
+test('a top-level API error beside a success status does not confirm a post', async () => {
+  const h = hook({ actionResult: { status: 'STATUS_SUCCEEDED' }, error: { status: 'INVALID_ARGUMENT', message: 'Request contains an invalid argument.' } });
+  h.arm(true);
+  await h.send();
+  assert.equal(h.requests.length, 1);
+  assert.equal(h.result().ok, false);
+  assert.match(h.result().error, /INVALID_ARGUMENT/);
+  assert.match(h.result().error, /Check the comments before trying again/);
+  assert.doesNotMatch(h.result().error, /Nothing was posted/);
+  assert.equal(JSON.parse(h.warnings[0][1]).kind, 'uncertain');
+});
+
+test('a 200 that carries only an API error confirms nothing and is not retried', async () => {
+  const h = hook({ error: { status: 'INTERNAL_ERROR', message: 'Something went wrong.' } });
+  h.arm(true);
+  await h.send();
+  assert.equal(h.requests.length, 1);
+  assert.equal(h.result().ok, false);
+  assert.match(h.result().error, /HTTP 200, INTERNAL_ERROR/);
+  assert.match(h.result().error, /Check the comments before trying again/);
+  assert.equal(JSON.parse(h.warnings[0][1]).kind, 'uncertain');
 });
 
 test('an unreadable server failure leaves the posting outcome uncertain', async () => {
