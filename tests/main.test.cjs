@@ -38,7 +38,7 @@ function hook(reply = { actionResult: { status: 'STATUS_SUCCEEDED' } }, status =
     window, location: { origin }, document,
     Request, Response, Headers, Blob, DecompressionStream, TextDecoder,
     console: { warn: (...args) => warnings.push(args) },
-    // Retry delays elapse at once, so the tests do not wait for them.
+    // Timers elapse at once so an accidental retry is caught without waiting.
     setTimeout: (callback) => setTimeout(callback, 0),
   });
   if (!preload) load();
@@ -105,29 +105,61 @@ test('INVALID_ARGUMENT for a GIF of unknown rating names both causes and is not 
   assert.match(h.result().error, /Either Tenor does not rate the GIF G, or YouTube is refusing GIF comments sent from desktop/);
 });
 
-test('INVALID_ARGUMENT for a G-rated GIF is retried, then blamed on YouTube, not the GIF', async () => {
+test('INVALID_ARGUMENT for a G-rated GIF sends once and reports the validation refusal', async () => {
   const h = hook(invalid, 400);
   h.arm(true);
   const returned = await h.send();
-  assert.equal(h.requests.length, 12);
+  assert.equal(h.requests.length, 1);
   assert.equal(returned.status, 400);
   for (const request of h.requests) assert.equal((await request.json()).tenorId, id);
-  assert.deepEqual(h.messages.filter((m) => m.type === 'retrying').map((m) => [m.attempt, m.tries]), Array.from({ length: 11 }, (_, i) => [i + 2, 12]));
+  assert.equal(h.messages.filter((m) => m.type === 'retrying').length, 0);
   assert.equal(h.result().ok, false);
-  assert.match(h.result().error, /refusing GIF comments sent from desktop \(tried 12 times\)\. The GIF is not the cause/);
-  assert.doesNotMatch(h.result().error, /different one/);
-  assert.equal(JSON.parse(h.warnings[0][1]).tries, 12);
+  assert.match(h.result().error, /HTTP 400, INVALID_ARGUMENT/);
+  assert.match(h.result().error, /issue #93/);
+  assert.match(h.result().error, /sent once/);
+  assert.doesNotMatch(h.result().error, /different one|GIF is not the cause/);
+  assert.equal(JSON.parse(h.warnings[0][1]).tries, 1);
 });
 
-test('a G-rated GIF blocked once and then accepted is posted on the second try', async () => {
+test('a validation refusal does not consume a later response; another user submission may succeed', async () => {
   const h = hook(invalid, 400, success);
+  h.arm(true);
+  assert.equal(await h.send(), h.response);
+  assert.equal(h.requests.length, 1);
+  assert.equal(h.result().ok, false);
+  assert.equal(h.messages.filter((m) => m.type === 'result').length, 1);
+
+  // No block cache: a fresh user action still gets a fresh request.
   h.arm(true);
   const returned = await h.send();
   assert.equal(h.requests.length, 2);
   assert.equal(returned, h.responses[1]);
   assert.equal(h.result().ok, true);
-  assert.equal(h.warnings.length, 0);
+  assert.equal(h.warnings.length, 1);
+  assert.equal(h.messages.filter((m) => m.type === 'result').length, 2);
 });
+
+for (const reply of [false, true]) {
+  for (const withText of [false, true]) {
+    test(`validation refusal sends one request for a GIF ${reply ? 'reply' : 'comment'} ${withText ? 'with' : 'without'} text`, async () => {
+      const h = hook(invalid, 400, success);
+      h.arm(true);
+      const url = reply ? `${origin}/youtubei/v1/comment/create_comment_reply` : create;
+      const response = await h.send(withText ? `hello ${marker}` : marker, url);
+      assert.equal(response, h.response);
+      assert.equal(h.requests.length, 1);
+      const body = await h.requests[0].json();
+      assert.equal(body.tenorId, id);
+      assert.equal(body.commentText, withText ? 'hello' : undefined);
+      assert.equal(h.messages.filter((m) => m.type === 'retrying').length, 0);
+      assert.equal(h.messages.filter((m) => m.type === 'result').length, 1);
+      assert.equal(h.result().ok, false);
+      const diagnostics = JSON.parse(h.warnings[0][1]);
+      assert.equal(diagnostics.tries, 1);
+      assert.equal(diagnostics.endpoint, reply ? 'create_comment_reply' : 'create_comment');
+    });
+  }
+}
 
 test('nested response commands expose their error text', async () => {
   const h = hook({ onResponseReceivedEndpoints: [{ commandExecutorCommand: { commands: [{ showErrorAction: { errorMessage: { messageRenderer: { text: { simpleText: 'Please sign in again.' } } } } }] } }] });
@@ -244,7 +276,7 @@ test('unarmed, reused and unsupported markers never reach YouTube', async () => 
 });
 
 
-// A blocked G-rated GIF is the one case that is tried again; see above.
+// Ambiguous outcomes and other refusals must not cause duplicate submissions.
 for (const [label, reply, status] of [
   ['success', success, 200],
   ['an unreadable response', '<html>temporary error</html>', 200],

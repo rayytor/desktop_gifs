@@ -37,21 +37,9 @@
   const CREATE_URL = /\/youtubei\/v1\/comment\/create_comment(_reply)?(\?|$)/;
   const MARKER = /\[\[gif:(\d{1,20}):([a-z0-9]{8,32})\]\]/;
   const ARM_TTL_MS = 3 * 60 * 1000;
-  // Since 14 October 2026 YouTube turns down GIF comments from desktop with
-  // HTTP 400. At first the very same request, sent again, was refused about
-  // two times in three. Later that day every request with a tenorId was
-  // refused, before YouTube even looked the GIF up: real or made-up ID, with
-  // or without text, comment or reply. Text comments in the same requests
-  // still validated, and no other request field carries a GIF. People report
-  // that it depends on where they connect from, so a blocked one still gets
-  // up to twelve tries in about half a minute. A blocked request posts
-  // nothing, so trying again cannot post twice.
-  const RETRY_DELAYS_MS = [1000, 1500, 2000, 2000, 2500, 2500, 3000, 3000, 3000, 3000, 3000];
-
   // nonce -> { id, ratedG, expires }
   const armed = new Map();
 
-  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const toContent = (msg) => window.postMessage({ gcfy: 'to-content', ...msg }, location.origin);
 
   function onMessage(e) {
@@ -140,30 +128,20 @@
     const headers = parsed.headers;
     headers.delete('content-encoding');
     const payload = JSON.stringify(body);
-    // A request body can be read only once, so every try builds its own.
-    const send = () => (input instanceof Request
-      ? originalFetch.call(this, new Request(input, { ...init, body: payload, headers }))
-      : originalFetch.call(this, input, { ...init, body: payload, headers }));
-
-    const tries = RETRY_DELAYS_MS.length + 1;
+    // INVALID_ARGUMENT is a validation refusal, not a signal to retry the
+    // unchanged payload. Since 14 October 2026 repeated desktop GIF requests
+    // have also been reported as refused (#93). Send once per submission;
+    // the content script retains the draft and GIF when YouTube rejects it.
     let response;
-    let verdict;
-    let attempt = 0;
-    for (;;) {
-      attempt++;
-      try {
-        response = await send();
-      } catch (e) {
-        toContent({ type: 'result', nonce, ok: false, error: 'The request could not be sent. Nothing was posted.' });
-        throw e;
-      }
-      verdict = await judge(response);
-      // A reply with a GIF that is not rated G is blocked the same way, and
-      // every time, so only a G one is worth another try.
-      if (verdict.kind !== 'blocked' || !entry.ratedG || attempt === tries) break;
-      toContent({ type: 'retrying', nonce, attempt: attempt + 1, tries });
-      await sleep(RETRY_DELAYS_MS[attempt - 1]);
+    try {
+      response = await (input instanceof Request
+        ? originalFetch.call(this, new Request(input, { ...init, body: payload, headers }))
+        : originalFetch.call(this, input, { ...init, body: payload, headers }));
+    } catch (e) {
+      toContent({ type: 'result', nonce, ok: false, error: 'The request could not be sent. Nothing was posted.' });
+      throw e;
     }
+    const verdict = await judge(response);
 
     const detail = `HTTP ${verdict.httpStatus}${verdict.apiStatus ? `, ${verdict.apiStatus}` : ''}`;
     const said = !verdict.message ? '' : /[.!?]$/.test(verdict.message) ? ` ${verdict.message}` : ` ${verdict.message}.`;
@@ -172,7 +150,7 @@
         ? `YouTube turned this GIF comment down:${said} Nothing was posted.`
         : 'YouTube does not accept this GIF. Try a different one. Nothing was posted.')
       : verdict.kind === 'blocked' ? (entry.ratedG
-        ? `YouTube is refusing GIF comments sent from desktop (tried ${tries} times). The GIF is not the cause, so another one will not help. This changed on YouTube's side; the YouTube phone app may still post GIFs. Nothing was posted.`
+        ? 'YouTube rejected this GIF comment (HTTP 400, INVALID_ARGUMENT). GIF comments sent from desktop may be unavailable; see issue #93. The request was sent once. The YouTube phone app may still post GIFs. Nothing was posted.'
         : 'YouTube turned this GIF comment down. Either Tenor does not rate the GIF G, or YouTube is refusing GIF comments sent from desktop. Nothing was posted.')
       : verdict.kind === 'rejected' ? `YouTube rejected this GIF comment (${detail}).${said} Nothing was posted.`
       : `YouTube did not confirm this GIF comment (${detail}).${said} Check the comments before trying again.`;
@@ -187,7 +165,7 @@
         ratedG: entry.ratedG,
         hasText: !!ownText,
         kind: verdict.kind,
-        tries: attempt,
+        tries: 1,
         httpStatus: verdict.httpStatus,
         apiStatus: verdict.apiStatus,
         actionStatus: verdict.actionStatus,
@@ -226,9 +204,9 @@
   //   gif        HTTP 200 with a showErrorAction where the actionResult would
   //              be: YouTube looked the GIF up and will not take it (unknown
   //              ID, or not rated G)
-  //   blocked    HTTP 400 INVALID_ARGUMENT: YouTube accepted the GIF but
-  //              refuses the comment. The page's own request was valid before
-  //              the GIF was added, so this is about GIF comments.
+  //   blocked    HTTP 400 INVALID_ARGUMENT: validation refused the modified
+  //              request. The generic status does not identify the field or
+  //              establish whether YouTube looked up the GIF.
   //   rejected   another refusal; nothing was posted
   //   uncertain  no readable confirmation either way; the comment may be up
   // with YouTube's own explanation, if it gave one.
